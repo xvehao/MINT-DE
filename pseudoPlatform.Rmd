@@ -1,0 +1,296 @@
+---
+title: "pseudoAssays"
+author: "Hao Xue\\
+
+        Cornell University"
+date: "`r Sys.Date()`"
+bibliography: flyDevAnalysis.bib
+biblio-style: apalike
+output: 
+  html_document:
+    toc: true
+---
+# Abstract
+
+We propose a framework for site selection for time-course multi-omics experiments based on summarized measures of both magnitude of change and temporal dynamic consistency. Specifically, for each modality, we calculate a $p$-value measuring the extend of differential expression and a $p$-value measuring the dynamical similarity across modalities. Then based on the summary of $p$-values, sites are ranked. 
+
+To evaluate our approach, we applied it to analyze a \textit{Drosophila} developmental time-course multi-omics dataset [@becker2018quantifying] and compared the selection with other existing methods. The visualization of selected time-series pairs from different assays shows high temporal concordance. These findings demonstrate the effectiveness of our method in selecting sites that are both differentially expressed within a modality and temporally related across modalities, suggesting the potential of our method to identify biologically important sites for downstream analysis and provide a complementarity of sites that is ignored by existing methods. 
+
+This demo reproduces Figures 4a and 4b in the paper.
+
+# Load and Preprocess Data
+```{r, warning = FALSE, message = FALSE}
+rm(list=ls())
+library(plotly)
+library(mixOmics) # import the mixOmics library
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(limma)
+source('eda/eda_function.R')
+```
+
+The dataset used in this demo could be downloaded from [GEO](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE121160). First, convert mRNA level and protein level into LFC. Use *voom*[@law2014voom] for mRNA. Genes with low mRNA read count are filtered as suggested by *voom*. 
+
+```{r, warning = FALSE, message = FALSE}
+### this script split rna-seq into two groups ###
+
+rna <- read.delim("~/time_course/data/flyDev/Fly_development_normalized_counts_cpm.txt")
+files = list.files(path="~/time_course/data/GSE121160_RAW",full.names = T)
+x <- readDGE(files, columns=c(1,2), 
+             labels=str_replace(str_replace(files,'/home/hx222/time_course/data/GSE121160_RAW/GSM34271.._',''),
+                                '.tsv.gz','')) 
+proteomics <- read.delim("~/time_course/data/flyDev/Fly_development_proteomics_normalized_counts.txt")
+
+
+hours = c('00','01','02','03','04','05','06','08','10','12','14','16','18','20')
+rep_idx = list()
+for (i in 1:4){
+  rep_idx[[i]] = seq(i,ncol(rna),by=4)
+}
+hour_idx = list()
+for (j in 1:length(hours)){
+  hour_idx[[j]] = ((j-1)*4+1):(4*j)
+}
+group <- as.factor(str_replace(colnames(x$counts),'h_.','')) 
+x$samples$group <- group 
+design = model.matrix((~0+factor(rep(hours,each=4))))
+colnames(design) = paste0('group',hours)
+contrast.matrix = makeContrasts(group20-group00, group18-group00, group16-group00,
+                                group14-group00, group12-group00, group10-group00,
+                                group08-group00, group06-group00, group05-group00,
+                                group04-group00, group03-group00, group02-group00,
+                                group01-group00, levels=design)
+```
+
+When comparing the performance of different integration methods on real omics data, it is hard to know the ground truth of truly differentially expressed genes. So we compare different methods by constructing "pseudo-assays". In particular, time-courses of biological replicates (there are 4 in total) 1 and 2 are treated as one type of assay, and replicates 3 and 4 are regarded as a second type of assay. We expect a reasonable method to select genes with high fold changes and low variability across two pseudo-assays, since they are indeed biological replicates with similar expression levels throughout the time, therefore, genes with low variability across replicates should be prioritized in selection. 
+
+```{r, warning = FALSE, message = FALSE}
+x_filtered = x
+keep <- filterByExpr(x$counts, design)
+x_filtered$counts = x$counts[keep,]
+rna_voom <- voom(x_filtered, design,plot=TRUE)
+rna_lfc = rna_voom$E
+for (h in 1:length(hours)){
+  rna_lfc[,hour_idx[[h]]] = rna_voom$E[,hour_idx[[h]]]-rna_voom$E[,hour_idx[[1]]]
+}
+rna_lfc1 = as.data.frame(rna_lfc) %>% dplyr::select(!contains('_3')&!contains('_4'))
+rna_lfc2 = as.data.frame(rna_lfc) %>% dplyr::select(!contains('_1')&!contains('_2'))
+rna_voom1 = as.data.frame(rna_voom) %>% dplyr::select(!contains('_3')&!contains('_4'))
+rna_voom2 = as.data.frame(rna_voom) %>% dplyr::select(!contains('_1')&!contains('_2'))
+```
+
+# Edgington's Method 
+
+We propose a method which simultaneously considers the significance of change and temporal concordance across assays. See details in the paper.
+
+```{r, warning = FALSE, message = FALSE}
+design = model.matrix((~0+factor(rep(hours,each=2))))
+colnames(design) = paste0('group',hours)
+contrast.matrix = makeContrasts(group20-group00, group18-group00, group16-group00,
+                                group14-group00, group12-group00, group10-group00,
+                                group08-group00, group06-group00, group05-group00,
+                                group04-group00, group03-group00, group02-group00,
+                                group01-group00, levels=design)
+rnaFitLimma1 = lmFit(rna_voom1,design)
+rnaFitLimmaContrast1 = contrasts.fit(rnaFitLimma1,contrast.matrix)
+rnaFitLimmaContrast1 = eBayes(rnaFitLimmaContrast1)
+colnames(rnaFitLimmaContrast1$p.value)=paste0('rna1.pvalue',hours[-1],'hr')
+rna_lfc_padj1 = cbind(rna_lfc1,rnaFitLimmaContrast1$p.value)
+
+rnaFitLimma2 = lmFit(rna_voom2,design)
+rnaFitLimmaContrast2 = contrasts.fit(rnaFitLimma2,contrast.matrix)
+rnaFitLimmaContrast2 = eBayes(rnaFitLimmaContrast2)
+topRNAgenes2 = topTable(rnaFitLimmaContrast2) 
+colnames(rnaFitLimmaContrast2$p.value)=paste0('rna2.pvalue',hours[-1],'hr')
+rna_lfc_padj2 = cbind(rna_lfc2,rnaFitLimmaContrast2$p.value)
+rna_platform = as.data.frame(cbind(rna_lfc_padj1, rna_lfc_padj2))
+rna_platform[,'rna1.minp'] = rna_platform %>% 
+  dplyr::select(contains('rna1.pvalue')) %>% as.matrix() %>% rowMins(na.rm = T)
+rna_platform[,'rna2.minp'] = rna_platform %>% 
+  dplyr::select(contains('rna2.pvalue')) %>% as.matrix() %>% rowMins(na.rm = T)
+rna_platform[,'cor.test.p'] = rowcortest(rna_platform %>% 
+                                           dplyr::select(contains(c('h_1','h_2'))),
+                                         rna_platform %>% 
+                                           dplyr::select(contains(c('h_3','h_4'))))
+```
+
+```{r, warning = FALSE, message = FALSE}
+topks = c(10,20,50,100,200,500,1000,2000)
+edgington_genes = select_genes(topks,'E',rna_platform$rna1.minp,rna_platform$rna2.minp,
+                               rna_platform$cor.test.p, Genes=rownames(rna_platform))
+rna_sum_edgington = summarize_res(edgington_genes,rna_platform)
+rna_sum_edgington$method = 'Edgington'
+```
+
+In Fisher's method, the sums of log of $p$-values are used instead of the direct sums. The Fisher's method can be overwhelmed by small $p$-values, while the Edgington's method is sensitive to large $p$-values.
+
+```{r, warning = FALSE, message = FALSE}
+topks = c(10,20,50,100,200,500,1000,2000)
+fisher_genes = select_genes(topks,'F',rna_platform$rna1.minp,rna_platform$rna2.minp,
+                               rna_platform$cor.test.p, Genes=rownames(rna_platform))
+rna_sum_fisher = summarize_res(fisher_genes,rna_platform)
+rna_sum_fisher$method = 'Fisher'
+```
+
+# Other methods
+
+## Simplified TimeOmics
+
+```{r, warning = FALSE, message = FALSE, results='hide'}
+params_comb = array(c(1,10,2,10,2,25,2,50,4,50,5,100,5,200,5,400),dim=c(2,8))
+rna_spls_filted = spls_filter(rna_lfc1, rna_lfc2)
+spls_rnaX = rna_spls_filted$spls_X 
+spls_rnaY = rna_spls_filted$spls_Y
+spls_design <- data.frame(sample = rep(1:2,each=14))
+spls_res = apply_spls(spls_rnaX, spls_rnaY, params_comb,spls_design,fpath='rna_pls_list_Scale.Rdata')
+load('eda/rna_pls_list_Scale.Rdata')
+rna1_pls_list = spls_res$pls_list1
+rna2_pls_list = spls_res$pls_list2
+```
+
+
+```{r, warning = FALSE, message = FALSE}
+rna_var_pls1 = rna_var_pls2 = rna_coefvar_pls1 = rna_coefvar_pls2 = list()
+rna_range_pls1 = rna_range_pls2 = list()
+for (i in 1:ncol(params_comb)){
+  rna1_pls_sites = unlist(rna1_pls_list[[i]])
+  rna2_pls_sites = unlist(rna2_pls_list[[i]])
+  rna_var_pls1[[i]] = rna_var_pls2[[i]] = 
+    rna_coefvar_pls1[[i]] = rna_coefvar_pls2[[i]] =
+    array(NA,c(length(rna1_pls_sites),length(hours)),
+          dimnames=list(rna1_pls_sites,hours))
+  rna_range_pls1[[i]] = rna_range_pls2[[i]]=
+    array(NA,length(rna1_pls_sites),
+          dimnames=list(rna1_pls_sites))
+  for (l in 1:length(rna1_pls_sites)){
+    for (k in 1:length(hours)){
+      hour_col1 = colnames(rna_lfc1)[grep(hours[k],colnames(rna_lfc1))]
+      hour_col2 = colnames(rna_lfc2)[grep(hours[k],colnames(rna_lfc2))]
+      rna_var_pls1[[i]][l,k] = var(as.numeric(c(rna_lfc1[rna1_pls_sites[l],
+                                                         hour_col1],
+                                                rna_lfc2[rna1_pls_sites[l],
+                                                         hour_col2])))
+      rna_coefvar_pls1[[i]][l,k] = comp_coefvar(as.numeric(c(rna_lfc1[rna1_pls_sites[l],
+                                                                      hour_col1],
+                                                             rna_lfc2[rna1_pls_sites[l],
+                                                                      hour_col2])))
+      rna_var_pls2[[i]][l,k] = var(as.numeric(c(rna_lfc1[rna2_pls_sites[l],
+                                                         hour_col1],
+                                                rna_lfc2[rna2_pls_sites[l],
+                                                         hour_col2])))
+      rna_coefvar_pls2[[i]][l,k] = comp_coefvar(as.numeric(c(rna_lfc1[rna2_pls_sites[l],
+                                                                      hour_col1],
+                                                             rna_lfc2[rna2_pls_sites[l],
+                                                                      hour_col2])))
+    }
+  }
+  rna_range_pls1[[i]] = apply(X = cbind(rna_lfc1[rna1_pls_sites,],
+                                        rna_lfc2[rna1_pls_sites,]),
+                              MARGIN = 1, FUN = function(x) diff(range(x)))
+  rna_range_pls2[[i]] = apply(X = cbind(rna_lfc1[rna2_pls_sites,],
+                                        rna_lfc2[rna2_pls_sites,]),
+                              MARGIN = 1, FUN = function(x) diff(range(x)))
+}
+```
+
+```{r, warning = FALSE, message = FALSE}
+rna_sum_pls1 = data.frame(var=unlist(lapply(1:length(rna_var_pls1),
+                                            function(i) rowMeans(rna_var_pls1[[i]]))),
+                          cv = unlist(lapply(1:length(rna_coefvar_pls1),
+                                             function(i) rowMeans(rna_coefvar_pls1[[i]],na.rm = T))),
+                          cutoff=paste0('top',rep(topks,sapply(1:length(rna_var_pls1),
+                                                               function(i) nrow(rna_var_pls1[[i]])))),
+                          method='timeOmics1')
+rna_sum_pls2 = data.frame(var=unlist(lapply(1:length(rna_var_pls2),
+                                            function(i) rowMeans(rna_var_pls2[[i]]))),
+                          cv = unlist(lapply(1:length(rna_coefvar_pls2),
+                                             function(i) rowMeans(rna_coefvar_pls2[[i]],na.rm = T))),
+                          cutoff=paste0('top',rep(topks,sapply(1:length(rna_var_pls2),
+                                                               function(i) nrow(rna_var_pls2[[i]])))),
+                          method='timeOmics2')
+```
+
+```{r}
+rna_sum_spls1 = summarize_spls_res(rna1_pls_list,rna_platform)
+rna_sum_spls1$method = 'timeOmics1'
+rna_sum_spls2 = summarize_spls_res(rna2_pls_list,rna_platform)
+rna_sum_spls2$method = 'timeOmics2'
+```
+
+
+
+```{r, warning = FALSE, message = FALSE}
+cutoffs = c(-13.5,-13.2,-12.7,-12.2,-11.6,-10.6,-9.7,-8.5)
+venn_genes = select_genes(cutoffs,'V',rna_platform$rna1.minp,rna_platform$rna2.minp,Genes=rownames(rna_platform))
+rna_sum_venn = summarize_res(venn_genes,rna_platform)
+rna_sum_venn$method = 'Venn'
+```
+
+# Results Benchmark
+
+To assess the robustness of our finding, we compare variability of top $n$ genes obtained by Edgington, Venn diagram and \textit{timeOmics} and report the results for different values of $n = 10, 20, 50, 100, 200, 500, 1000$ and $2000$ (the parameters used in each method are summarized in Section \ref{supp_param}). 
+The variability is quantified by the coefficient of variation (CV) of time-courses of each site across all biological replicates in each assay at each time point averaged over all time points, i.e. 
+\begin{align*}
+cv(x_g) &= \frac{1}{T}\sum_{t=1}^T\frac{sd(x_{tg})}{mean(x_{tg})},\\
+sd(x_{tg})&=\sqrt{\frac{1}{B}\sum_{b=1}^B(x_{tg}^{(b)}-mean(x_{tg}))^2},\\
+mean(x_{tg})&=\frac{1}{B}\sum_{b=1}^Bx_{tg}^{(b)}.   
+\end{align*}
+
+```{r, warning = FALSE, message = FALSE}
+rna_summaryvar_F_venn_E_pls = rbind(rna_sum_venn,
+                                    rna_sum_edgington,
+                                    rna_sum_spls1,
+                                    rna_sum_spls2)
+ggplot(data=rna_summaryvar_F_venn_E_pls)+
+  geom_boxplot(aes(x=as.factor(cutoff),y=log(abs(cv)),fill=method,color=NULL))+ 
+  scale_x_discrete(name ="", limits=paste0('top',topks))+
+  ylab('log(|CV|)')+
+  theme_bw()+
+  theme(text = element_text(size = 15))
+ggsave("PseudoCV_rna.png", device = "png", width=9,height=6)
+```
+
+
+
+
+```{r,warning = FALSE, message = FALSE}
+library(splines)
+X <- ns(rep(as.numeric(hours),each=4),df=5)
+design <- model.matrix(~X)
+fit <- lmFit(rna_lfc, design)
+fit <- eBayes(fit)
+iii=5
+selected_sites = rbind(data.frame(coef=topTable(fit[edgington_genes[[iii]]$gene_id,], coef=2:6,
+                                                length(edgington_genes[[iii]]$gene_id))$AveExpr,
+                                  p.value=topTable(fit[edgington_genes[[iii]]$gene_id,], coef=2:6,
+                                                   length(edgington_genes[[iii]]$gene_id))$P.Value,
+                                  method='Edgington'),
+                       data.frame(coef=topTable(fit[unlist(rna1_pls_list[[iii]]),], coef=2:6,
+                                                length(unlist(rna1_pls_list[[iii]])))$AveExpr,
+                                  p.value=topTable(fit[unlist(rna1_pls_list[[iii]]),], coef=2:6,
+                                                   length(unlist(rna1_pls_list[[iii]])))$P.Value,
+                                  method='timeOmics'))
+# all_sites = data.frame(coef=topTable(fit, coef=2:6,
+#                                      number=nrow(fit))$AveExpr,
+#                        p.value=topTable(fit, coef=2:6, 
+#                                         number=nrow(fit))$P.Value,
+#                        method='all')
+ggplot()+
+  geom_point(data=selected_sites,
+             aes(x=coef,
+                 y=-log10(p.value),
+                 colour = method),
+             alpha=0.5)  +
+  xlab('Average Expression')+
+  ylab('-log(p-value)')+
+  theme_bw()+
+  theme(text = element_text(size = 15))
+ggsave("PseudoVolca_rna.png", device = "png", width=9,height=6)
+```
+
+
+
+
+
+
