@@ -649,6 +649,12 @@ spls_filter = function(lfc1, lfc2, tokeep=2500){
 }
 
 select_genes = function(param,method,p1,p2,p3=NULL,Genes=NULL){
+  # This function selects candidate genes given three p-values (p-values for differential expression in two modalities and p-value for correlation test across modalities).
+  # The inputs are param: parameters correspond to each method, cutoff for p-value cutoff in commonDE/Venn diagram method, top_k for number of top k selected genes in Fisher's method or Edgington's method.
+  #                method: the method to choose, "V" for commonDE/Venn diagram method, "F" for Fisher's method, "E" for Edgington's method;
+  #                p1: p-values for significance of differential expression in the first modality;
+  #                p2: p-values for significance of differential expression in the second modality;
+  #                p3: p-values for significance of correlation test.
   selected_genes = list()
   for (k in 1:length(param)){
     if (method=='F'){
