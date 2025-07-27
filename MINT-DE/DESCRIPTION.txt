@@ -1,2 +1,0 @@
-Package: brocolors
-Version: 0.1
