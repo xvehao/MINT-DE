@@ -1,0 +1,21 @@
+Package: mintde
+Type: Package
+Title: Integrative Analysis of Differentially Expressed Genes in Time-Course Multi-Omics Data with MINT-DE
+Version: 0.1.0
+Author: Hao Xue
+Maintainer: Hao Xue <hx222@cornell.edu>
+Description: MINT-DE (Multi-omics INtegration of Time-course for Differential Expression analysis) is capable of selecting genes according to the magnitude of change and the temporal dynamic consistency across two modalities based on summarized statistics. See our paper (doi: 10.21203/rs.3.rs-3806701/v2) for details.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Imports: 
+    ChIPseeker,
+    DESeq2,
+    dplyr,
+    EnsDb.Hsapiens.v75,
+    genomation,
+    ggplot2,
+    ggtext,
+    stringr,
+    TxDb.Hsapiens.UCSC.hg19.knownGene
+RoxygenNote: 7.3.2
