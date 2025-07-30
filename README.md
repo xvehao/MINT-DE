@@ -1,6 +1,10 @@
 This is the code to reproduce all the plots in the paper Integrative Analysis of Differentially Expressed Genes in Time-Course Multi-Omics Data with MINT-DE.
 Please contact Hao Xue (hx222(at)cornell.edu) for any questions. 
-The R-package can be installed by 
+The R-package can be installed directly from github by 
+
+1) devtools::install_github("https://github.com/xvehao/MINT-DE/")
+
+or locally by
 
 1) downloading mintde_0.1.0.tar.gz
 2) In terminal: cd the_directory_where_mintde_is_downloaded 
